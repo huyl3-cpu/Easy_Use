@@ -968,10 +968,9 @@ class forLoopStart:
 
         initial_values = {("initial_value%d" % num): kwargs.get("initial_value%d" % num, None) for num in
                           range(1, MAX_FLOW_NUM)}
-        while_open = graph.node("easy whileLoopStart", condition=total, initial_value0=i+1, **initial_values)
-        outputs = [kwargs.get("initial_value%d" % num, None) for num in range(1, MAX_FLOW_NUM)]
+        while_open = graph.node("easy whileLoopStart", condition=total, initial_value0=i, **initial_values)
         return {
-            "result": tuple(["stub", i] + outputs),
+            "result": tuple([while_open.out(j) for j in range(1 + MAX_FLOW_NUM)]),
             "expand": graph.finalize(),
         }
 
