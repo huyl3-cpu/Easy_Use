@@ -974,22 +974,19 @@ class forLoopStart:
 
         uid = str(unique_id) if unique_id else "default"
 
-        # Dedup: ComfyUI calls for_loop_start TWICE with same uid on initial execution
-        # Block the 2nd duplicate call with ExecutionBlocker
+        # Dedup: ComfyUI calls for_loop_start TWICE with same uid
+        # Call 1 = pre-evaluation (BLOCK this one)
+        # Call 2 = real call that creates the expand/loop graph (let this run)
         if not is_recursion:
-            if uid in _FORLOOP_INITIAL_DONE:
-                # DUPLICATE call detected - block downstream execution
-                _FORLOOP_INITIAL_DONE.discard(uid)  # Reset for next workflow run
-                print(f"[ForLoop DEDUP] BLOCKED duplicate call: uid={uid}, i={i}")
+            if uid not in _FORLOOP_INITIAL_DONE:
+                # FIRST call (pre-evaluation) - block it, no expand
+                _FORLOOP_INITIAL_DONE.add(uid)
+                print(f"[ForLoop DEDUP] BLOCKED pre-eval call: uid={uid}, i={i}")
                 outputs = [ExecutionBlocker(None)] * (MAX_FLOW_NUM - 1)
-                initial_values = {("initial_value%d" % num): kwargs.get("initial_value%d" % num, None) for num in
-                                  range(1, MAX_FLOW_NUM)}
-                while_open = graph.node("easy whileLoopStart", condition=total, initial_value0=i, **initial_values)
-                return {
-                    "result": tuple(["stub", ExecutionBlocker(None)] + outputs),
-                    "expand": graph.finalize(),
-                }
-            _FORLOOP_INITIAL_DONE.add(uid)
+                return tuple(["stub", ExecutionBlocker(None)] + outputs)
+            else:
+                # SECOND call (real) - process normally with expand
+                _FORLOOP_INITIAL_DONE.discard(uid)
         else:
             # Recursion call - clear flag for base uid so next workflow run works
             base_uid = uid.split(".")[-1] if "." in uid else uid
