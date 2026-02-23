@@ -771,8 +771,8 @@ except:
     ExecutionBlocker = None
 
 
-# ===== For Loop index dedup tracker (stored in RAM, NOT affected by clear_ram/gc) =====
-_FORLOOP_DEDUP_INDICES = set()
+# ===== For Loop dedup: block duplicate for_loop_start calls (RAM-safe, NOT affected by clear_ram/gc) =====
+_FORLOOP_INITIAL_DONE = set()  # Set of unique_ids that have been executed
 
 
 class whileLoopStart:
@@ -799,23 +799,9 @@ class whileLoopStart:
     CATEGORY = "EasyUse/Logic/While Loop"
 
     def while_loop_open(self, condition, **kwargs):
-        global _FORLOOP_DEDUP_INDICES
-        # Dedup: skip index if already executed by forLoopStart's initial result
-        idx = kwargs.get("initial_value0", None)
-        print(f"[DEDUP DEBUG] while_loop_open called: idx={idx}, tracker={_FORLOOP_DEDUP_INDICES}, condition={condition}")
-        if idx is not None and isinstance(idx, (int, float)):
-            int_idx = int(idx)
-            if int_idx in _FORLOOP_DEDUP_INDICES:
-                _FORLOOP_DEDUP_INDICES.discard(int_idx)
-                kwargs["initial_value0"] = int_idx + 1
-                print(f"[DEDUP DEBUG] SKIPPED index {int_idx} -> now {int_idx + 1}")
-            else:
-                print(f"[DEDUP DEBUG] index {int_idx} NOT in tracker, proceeding normally")
-
         values = []
         for i in range(MAX_FLOW_NUM):
             values.append(kwargs.get("initial_value%d" % i, None) if condition else ExecutionBlocker(None))
-        print(f"[DEDUP DEBUG] while_loop_open returning value0={values[0] if values else 'N/A'}")
         return tuple(["stub"] + values)
 
 
@@ -979,16 +965,37 @@ class forLoopStart:
     CATEGORY = "EasyUse/Logic/For Loop"
 
     def for_loop_start(self, total, prompt=None, extra_pnginfo=None, unique_id=None, **kwargs):
-        global _FORLOOP_DEDUP_INDICES
+        global _FORLOOP_INITIAL_DONE
         graph = GraphBuilder()
         i = 0
-        if "initial_value0" in kwargs:
+        is_recursion = "initial_value0" in kwargs
+        if is_recursion:
             i = kwargs["initial_value0"]
 
-        # Register initial index in dedup tracker (RAM-safe, not affected by clear_ram)
-        _FORLOOP_DEDUP_INDICES.clear()
-        _FORLOOP_DEDUP_INDICES.add(i)
-        print(f"[DEDUP DEBUG] for_loop_start: i={i}, total={total}, tracker={_FORLOOP_DEDUP_INDICES}, unique_id={unique_id}")
+        uid = str(unique_id) if unique_id else "default"
+
+        # Dedup: ComfyUI calls for_loop_start TWICE with same uid on initial execution
+        # Block the 2nd duplicate call with ExecutionBlocker
+        if not is_recursion:
+            if uid in _FORLOOP_INITIAL_DONE:
+                # DUPLICATE call detected - block downstream execution
+                _FORLOOP_INITIAL_DONE.discard(uid)  # Reset for next workflow run
+                print(f"[ForLoop DEDUP] BLOCKED duplicate call: uid={uid}, i={i}")
+                outputs = [ExecutionBlocker(None)] * (MAX_FLOW_NUM - 1)
+                initial_values = {("initial_value%d" % num): kwargs.get("initial_value%d" % num, None) for num in
+                                  range(1, MAX_FLOW_NUM)}
+                while_open = graph.node("easy whileLoopStart", condition=total, initial_value0=i, **initial_values)
+                return {
+                    "result": tuple(["stub", ExecutionBlocker(None)] + outputs),
+                    "expand": graph.finalize(),
+                }
+            _FORLOOP_INITIAL_DONE.add(uid)
+        else:
+            # Recursion call - clear flag for base uid so next workflow run works
+            base_uid = uid.split(".")[-1] if "." in uid else uid
+            _FORLOOP_INITIAL_DONE.discard(base_uid)
+
+        print(f"[ForLoop DEDUP] Processing: uid={uid}, i={i}, total={total}")
 
         initial_values = {("initial_value%d" % num): kwargs.get("initial_value%d" % num, None) for num in
                           range(1, MAX_FLOW_NUM)}
