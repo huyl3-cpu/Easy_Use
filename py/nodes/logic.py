@@ -771,6 +771,10 @@ except:
     ExecutionBlocker = None
 
 
+# ===== For Loop index dedup tracker (stored in RAM, NOT affected by clear_ram/gc) =====
+_FORLOOP_DEDUP_INDICES = set()
+
+
 class whileLoopStart:
     def __init__(self):
         pass
@@ -795,6 +799,15 @@ class whileLoopStart:
     CATEGORY = "EasyUse/Logic/While Loop"
 
     def while_loop_open(self, condition, **kwargs):
+        global _FORLOOP_DEDUP_INDICES
+        # Dedup: skip index if already executed by forLoopStart's initial result
+        idx = kwargs.get("initial_value0", None)
+        if idx is not None and isinstance(idx, (int, float)):
+            int_idx = int(idx)
+            if int_idx in _FORLOOP_DEDUP_INDICES:
+                _FORLOOP_DEDUP_INDICES.discard(int_idx)
+                kwargs["initial_value0"] = int_idx + 1
+
         values = []
         for i in range(MAX_FLOW_NUM):
             values.append(kwargs.get("initial_value%d" % i, None) if condition else ExecutionBlocker(None))
@@ -961,16 +974,22 @@ class forLoopStart:
     CATEGORY = "EasyUse/Logic/For Loop"
 
     def for_loop_start(self, total, prompt=None, extra_pnginfo=None, unique_id=None, **kwargs):
+        global _FORLOOP_DEDUP_INDICES
         graph = GraphBuilder()
         i = 0
         if "initial_value0" in kwargs:
             i = kwargs["initial_value0"]
 
+        # Register initial index in dedup tracker (RAM-safe, not affected by clear_ram)
+        _FORLOOP_DEDUP_INDICES.clear()
+        _FORLOOP_DEDUP_INDICES.add(i)
+
         initial_values = {("initial_value%d" % num): kwargs.get("initial_value%d" % num, None) for num in
                           range(1, MAX_FLOW_NUM)}
         while_open = graph.node("easy whileLoopStart", condition=total, initial_value0=i, **initial_values)
+        outputs = [kwargs.get("initial_value%d" % num, None) for num in range(1, MAX_FLOW_NUM)]
         return {
-            "result": tuple([while_open.out(j) for j in range(1 + MAX_FLOW_NUM)]),
+            "result": tuple(["stub", i] + outputs),
             "expand": graph.finalize(),
         }
 
