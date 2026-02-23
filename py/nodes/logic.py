@@ -802,15 +802,20 @@ class whileLoopStart:
         global _FORLOOP_DEDUP_INDICES
         # Dedup: skip index if already executed by forLoopStart's initial result
         idx = kwargs.get("initial_value0", None)
+        print(f"[DEDUP DEBUG] while_loop_open called: idx={idx}, tracker={_FORLOOP_DEDUP_INDICES}, condition={condition}")
         if idx is not None and isinstance(idx, (int, float)):
             int_idx = int(idx)
             if int_idx in _FORLOOP_DEDUP_INDICES:
                 _FORLOOP_DEDUP_INDICES.discard(int_idx)
                 kwargs["initial_value0"] = int_idx + 1
+                print(f"[DEDUP DEBUG] SKIPPED index {int_idx} -> now {int_idx + 1}")
+            else:
+                print(f"[DEDUP DEBUG] index {int_idx} NOT in tracker, proceeding normally")
 
         values = []
         for i in range(MAX_FLOW_NUM):
             values.append(kwargs.get("initial_value%d" % i, None) if condition else ExecutionBlocker(None))
+        print(f"[DEDUP DEBUG] while_loop_open returning value0={values[0] if values else 'N/A'}")
         return tuple(["stub"] + values)
 
 
@@ -983,6 +988,7 @@ class forLoopStart:
         # Register initial index in dedup tracker (RAM-safe, not affected by clear_ram)
         _FORLOOP_DEDUP_INDICES.clear()
         _FORLOOP_DEDUP_INDICES.add(i)
+        print(f"[DEDUP DEBUG] for_loop_start: i={i}, total={total}, tracker={_FORLOOP_DEDUP_INDICES}, unique_id={unique_id}")
 
         initial_values = {("initial_value%d" % num): kwargs.get("initial_value%d" % num, None) for num in
                           range(1, MAX_FLOW_NUM)}
